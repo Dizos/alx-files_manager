@@ -1,5 +1,6 @@
 import sha1 from 'sha1';
 import dbClient from '../utils/db.js';
+import redisClient from '../utils/redis.js';
 
 class UsersController {
   // POST /users
@@ -44,6 +45,38 @@ class UsersController {
       });
     } catch (err) {
       console.error('Error creating user:', err);
+      return res.status(500).json({ error: 'Internal Server Error' });
+    }
+  }
+
+  // GET /users/me
+  static async getMe(req, res) {
+    try {
+      const token = req.header('X-Token');
+      if (!token) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      // Retrieve user ID from Redis
+      const userId = await redisClient.get(`auth_${token}`);
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      // Find user in MongoDB
+      const usersCollection = dbClient.db.collection('users');
+      const user = await usersCollection.findOne({ _id: new dbClient.client.mongodb.ObjectId(userId) });
+      if (!user) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      // Return user with id and email
+      return res.status(200).json({
+        id: user._id,
+        email: user.email,
+      });
+    } catch (err) {
+      console.error('Error retrieving user:', err);
       return res.status(500).json({ error: 'Internal Server Error' });
     }
   }
