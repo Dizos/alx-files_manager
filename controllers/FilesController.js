@@ -3,8 +3,12 @@ import fs from 'fs';
 import path from 'path';
 import mime from 'mime-types';
 import { ObjectId } from 'mongodb';
+import Bull from 'bull';
 import dbClient from '../utils/db.js';
 import redisClient from '../utils/redis.js';
+
+// Create Bull queue
+const fileQueue = new Bull('fileQueue');
 
 class FilesController {
   static async postUpload(req, res) {
@@ -92,6 +96,14 @@ class FilesController {
 
       // Insert file document into database
       const result = await filesCollection.insertOne(fileDoc);
+
+      // Add job to fileQueue for image thumbnail generation
+      if (type === 'image') {
+        await fileQueue.add({
+          userId,
+          fileId: result.insertedId.toString(),
+        });
+      }
 
       // Return new file document
       return res.status(201).json({
@@ -324,8 +336,18 @@ class FilesController {
         return res.status(400).json({ error: "A folder doesn't have content" });
       }
 
+      // Get size query parameter
+      const size = req.query.size;
+      const validSizes = ['100', '250', '500'];
+      let filePath = file.localPath;
+
+      // If size is specified, use thumbnail path
+      if (size && validSizes.includes(size)) {
+        filePath = `${file.localPath}_${size}`;
+      }
+
       // Check if file exists locally
-      if (!file.localPath || !fs.existsSync(file.localPath)) {
+      if (!filePath || !fs.existsSync(filePath)) {
         return res.status(404).json({ error: 'Not found' });
       }
 
@@ -333,7 +355,7 @@ class FilesController {
       const mimeType = mime.lookup(file.name) || 'application/octet-stream';
 
       // Read and return file content
-      const fileContent = await fs.promises.readFile(file.localPath);
+      const fileContent = await fs.promises.readFile(filePath);
       res.setHeader('Content-Type', mimeType);
       return res.status(200).send(fileContent);
     } catch (err) {
